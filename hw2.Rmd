@@ -3,7 +3,7 @@ title: "Biostat 276 Homework 1"
 author: "Zian ZHUANG"
 output:
   pdf_document:
-    toc: yes
+    toc: false
 ---
 
 <!-- Setup -->
@@ -27,6 +27,26 @@ library(tidyverse)
 library(kableExtra)
 ```
 <!-- Begin writing -->
-## 1. Sampling from the Banana Distribution
+## Bayesian Probit Regression
 
-### (a) 
+In R load the package (survival) and consider the analysis of the data-set (infert). Ignoring dependence due to matching, consider a Bayesian analysis for a logistic regression model relating case status to: age, parity, education, spontaneous and induced. More precisely, assume case status $y_i$ has density $y_i\sim _{ind}Bern(p_i),p_i=\Phi(X^{'}_i\beta)$, where
+$\Phi(.)$ is the standard Gaussian cdf. Consider a prior $\beta\sim N(0,10^2(X^{'}X)^{-1})$. We are interested in $p(\beta|Y)$.
+
+### (1) 
+
+Describe and implement an adaptive Metropolis-Hastings algorithm designed to obtain a MC with stationary distribution $p(\beta|Y)$.
+
+### (2) 
+
+Describe and implement a data augmented (DA-MCMC ) strategy targeting $p(\beta|Y)$.
+
+### (3)
+
+Describe and implement a parameter expanded - data augmentation (PX-DA MCMC) algorithm targeting $p(\beta|Y)$.
+
+### (4)
+
+Assess mixing and convergence of the chains induced by the competing transition schemes implemented in 1,2 and 3. Comment on potential trade-offs involving: coding complexity, storage and cpu time.
+
+
+
