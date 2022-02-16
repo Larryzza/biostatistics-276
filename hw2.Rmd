@@ -1,0 +1,32 @@
+---
+title: "Biostat 276 Homework 1"
+author: "Zian ZHUANG"
+output:
+  pdf_document:
+    toc: yes
+---
+
+<!-- Setup -->
+<style type="text/css">
+body{ /* Normal  */
+      font-size: 17px;
+      font-family: "Times New Roman";
+  }
+h1,h2,h3,h4,h5,h6{
+  font-family: "Times New Roman";
+}
+</style>
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, cache.lazy = FALSE)
+library(lars)
+library(plotmo)
+library(statmod)
+library(reshape2)
+library(MCMCpack)
+library(tidyverse)
+library(kableExtra)
+```
+<!-- Begin writing -->
+## 1. Sampling from the Banana Distribution
+
+### (a) 
