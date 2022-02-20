@@ -18,11 +18,14 @@ h1,h2,h3,h4,h5,h6{
 </style>
 ```{r setup, include = FALSE}
 knitr::opts_chunk$set(echo = TRUE, cache = TRUE, cache.lazy = FALSE)
+rm(list = ls())
 library(lars)
 library(plotmo)
+library(mvtnorm)
 library(statmod)
 library(reshape2)
 library(MCMCpack)
+library(truncnorm)
 library(tidyverse)
 library(kableExtra)
 ```
@@ -32,21 +35,321 @@ library(kableExtra)
 In R load the package (survival) and consider the analysis of the data-set (infert). Ignoring dependence due to matching, consider a Bayesian analysis for a logistic regression model relating case status to: age, parity, education, spontaneous and induced. More precisely, assume case status $y_i$ has density $y_i\sim _{ind}Bern(p_i),p_i=\Phi(X^{'}_i\beta)$, where
 $\Phi(.)$ is the standard Gaussian cdf. Consider a prior $\beta\sim N(0,10^2(X^{'}X)^{-1})$. We are interested in $p(\beta|Y)$.
 
+```{r}
+library(survival)
+data("infert")
+infert$education <- infert$education %>% as.numeric() - 1
+df <- infert %>% 
+  select(c("case", "education", "age", "parity", "induced", "spontaneous"))
+```
+
+
 ### (1) 
 
 Describe and implement an adaptive Metropolis-Hastings algorithm designed to obtain a MC with stationary distribution $p(\beta|Y)$.
+
+We know that 
+
+$$\begin{aligned}
+P(\beta|Y)&=P(Y|\beta)P(\beta)\\
+&=(\prod^n_{i=1}\Phi(X^{'}_i\beta)^{y_i}(1-\Phi(X^{'}_i\beta))^{1-y_i})P(\beta)\\
+&\propto(\prod^n_{i=1}\Phi(X^{'}_i\beta)^{y_i}(1-\Phi(X^{'}_i\beta))^{1-y_i})*\exp(-\frac{1}{2}\beta^{'}\sum \beta)
+\end{aligned}$$
+
+```{r}
+bvar_prior <- solve(t(as.matrix(df[,-1])) %*% as.matrix(df[,-1])) * 100
+
+.cal_ll <- function(beta){
+  est <- data.frame(est=pnorm(as.matrix(df[,-1]) %*% t(beta)), y=df[,1])
+  out <- apply(est, 1, function(x){ifelse(x[2]==0,1-x[1],x[1])})
+  out <- log(out) %>% sum - 1/2 * beta %*% bvar_prior %*% t(beta) 
+}
+
+mh.sim <- function(nsim=1000, burn=0, delta=0.8, seed=1996){
+  set.seed(seed)
+  
+  num_beta <- dim(df)[2]-1
+  nsim.total <- nsim*(1.0 + burn)
+  burn.num <- nsim*burn
+  delta_set <- rbinom(nsim.total, 1, prob = delta)
+  
+  beta <- matrix(rep(0,num_beta),1)
+  beta.ch <- matrix(NA,nsim,num_beta)
+  bvar <- diag(num_beta)*10^(-10)
+  
+  for(i in 1:nsim.total){
+    if(i <= 3000){
+      bvar <- (bvar * (i - 1) + t(beta) %*% beta + diag(num_beta)*10^(-10))/i
+    }
+    beta_temp_1 <- rmvnorm(n=1, mean = beta, sigma = bvar)
+    beta_temp_2 <- rmvnorm(n=1, mean = beta, sigma = bvar_prior)
+    beta_temp <- beta_temp_1 * delta_set[nsim.total] + 
+      beta_temp_2 * (1-delta_set[nsim.total])
+    P0 <- .cal_ll(beta)
+    P1 <- .cal_ll(beta_temp)
+    ratio <- P1 - P0
+    if(log(runif(1)) < ratio){
+      beta <- beta_temp
+    }
+    if(i > burn.num){ 
+      i1 <- i - burn.num
+      beta.ch[i1,] = beta
+    }
+  }
+  return(list(beta=beta.ch))
+}
+```
+
+```{r}
+burn=0.3
+nsim=5000
+
+# simulation
+mcmc.sim <- mh.sim(nsim=nsim, burn=burn, delta=0.7)
+# plot
+par(mfrow=c(2,3))
+for(i in 1:5){
+  plot(1:nsim, mcmc.sim$beta[,i], type="l")
+}
+par(mfrow=c(2,3))
+for(i in 1:5){
+  acf(mcmc.sim$beta[,i])
+}
+
+results <- apply(mcmc.sim$beta, 2, 
+                 function(x){quantile(x, c(0.025, 0.5, 0.975))}) %>% round(.,2)
+colnames(results) <- colnames(df)[-1]
+results %>%
+  kbl(caption = "Summary Table") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
 
 ### (2) 
 
 Describe and implement a data augmented (DA-MCMC ) strategy targeting $p(\beta|Y)$.
 
+We add a new parameter $z$ here, which makes 
+
+$$\begin{aligned}
+Y_i|z_i\sim I(z_i>0)\\
+z_i|\beta,\tau_i\sim N(X_i\beta,1)
+\end{aligned}$$
+
+Then we can calculate the full posterior distribution for $\beta$,
+
+$$\begin{aligned}
+P(\beta|z,\tau)&=P(z|\beta)*P(\beta)\\
+&\propto\prod\exp(-\frac{(z_i-X_i\beta)^2}{2})*\exp(-\frac{1}{2}\beta^{'}\sum \beta)\\
+&= \exp(-\frac{1}{2}(\beta^{'}X^{'}X\beta-2*\beta X^{'}z)-\frac{1}{2}*\beta^{'}\sum \beta)\\
+&= \exp(-\frac{1}{2}(\beta^{'}(X^{'}X+\sum)\beta-2*\beta X^{'}z))
+\end{aligned}$$
+
+This is a normal kernel. Then we found that $\beta|z\sim N(\frac{ X^{'}z}{ X^{'}X+\sum},\frac{1}{X^{'}X+\sum})$.
+
+As for $z$,
+
+$$\begin{aligned}
+P(z_i|\beta,Y)&=P(Y_i|z_i)*P(z_i|\beta)\\
+&=I(z_i>0)*\exp(-\frac{(z_i-X_i\beta)^2}{2})\text{ (if Yi=1)}\\
+&=I(z_i\leq0)*\exp(-\frac{(z_i-X_i\beta)^2}{2})\text{ (if Yi=0)}
+\end{aligned}$$
+
+Then we found that $z_i$ follows truncated normal distribution with mean $X_i\beta$ and variance $1$.
+
+
+```{r}
+da.mh.sim <- function(nsim=1000, burn=0, seed=1996,
+                      X=as.matrix(df[,-1]), 
+                      Y=as.matrix(df[,1])){
+  set.seed(seed)
+  
+  num_beta <- dim(df)[2]-1
+  nsim.total <- nsim*(1.0 + burn)
+  burn.num <- nsim*burn
+  
+  beta <- matrix(rep(0,num_beta),1)
+  beta.ch <- matrix(NA,nsim,num_beta)
+
+  z <- rep(0.5, length(Y))
+  z.ch <- matrix(NA,nsim,length(Y))
+  
+  range <- cbind(ifelse(Y==0, -Inf, 0),
+                 ifelse(Y==0, 0, Inf))
+  
+  for(i in 1:nsim.total){
+    #i=1
+    #z
+    z_info <- as.matrix(cbind(X%*%t(beta), # z_mean
+                              1, # z_sd
+                              range),) # truncated range
+    z <- apply(z_info, 1, 
+               function(info){rtruncnorm(1, a=info[3], b=info[4], 
+                                         mean = info[1], sd = info[2])})
+    
+    #beta
+    bmean <- solve(t(X)%*%X+bvar_prior)%*%t(X)%*%z
+    bvar <- solve(t(X)%*%X+bvar_prior)
+    beta <- rmvnorm(n=1, mean = bmean, sigma = bvar)
+
+    if(i > burn.num){ 
+      i1 <- i - burn.num
+      beta.ch[i1,] = beta
+    }
+  }
+  return(list(beta=beta.ch))
+}
+```
+
+```{r}
+burn=0.3
+nsim=5000
+
+# simulation
+mcmc.sim <- da.mh.sim(nsim=nsim, burn=burn)
+# plot
+par(mfrow=c(2,3))
+for(i in 1:5){
+  plot(1:nsim, mcmc.sim$beta[,i], type="l")
+}
+par(mfrow=c(2,3))
+for(i in 1:5){
+  acf(mcmc.sim$beta[,i])
+}
+
+results <- apply(mcmc.sim$beta, 2, 
+                 function(x){quantile(x, c(0.025, 0.5, 0.975))}) %>% round(.,2)
+colnames(results) <- colnames(df)[-1]
+results %>%
+  kbl(caption = "Summary Table") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
 ### (3)
 
 Describe and implement a parameter expanded - data augmentation (PX-DA MCMC) algorithm targeting $p(\beta|Y)$.
+
+Here we add $w$ and $\alpha$, which follow
+
+$$\begin{aligned}
+W_i|\beta,\alpha\sim N(X_i^{'}\beta\alpha, \alpha^2)\\
+Y_i|W_i=I(W_i>0)\\
+\alpha^2\sim IG(a,b)
+\end{aligned}$$
+
+Then we can calculate the full posterior distribution for $\beta$,
+
+$$\begin{aligned}
+P(\beta|w,\alpha)&=P(w|\beta,\alpha)*P(\beta)\\
+&\propto\prod\exp(-\frac{(w_i-\alpha X_i\beta)^2}{2\alpha^2})*\exp(-\frac{1}{2}\beta^{'}\sum \beta)\\
+&= \exp(-\frac{1}{2\alpha^2}(\alpha^2\beta^{'}*X^{'}X\beta-2*\alpha\beta X^{'}w)-\frac{1}{2}*\beta^{'}\sum \beta)\\
+&= \exp(-\frac{1}{2}(\beta^{'}(X^{'}X+\sum/\alpha^2)\beta-2*\beta X^{'}w/\alpha))
+\end{aligned}$$
+
+This is a normal kernel. Then we found that $\beta|z,\tau\sim N(\frac{X^{'}w}{\alpha X^{'}X+\sum/\alpha},\frac{1}{X^{'}X+\sum/\alpha^2})$.
+
+As for $w$,
+
+$$\begin{aligned}
+P(w_i|\beta,\alpha, Y_i)&=P(Y_i|w_i)*P(w_i|\beta,\alpha)\\
+&=I(w_i>0)*\exp(-\frac{(w_i-\alpha X_i\beta)^2}{2\alpha^2})\text{ (if Yi=1)}\\
+&=I(w_i\leq0)*\exp(-\frac{(w_i-\alpha X_i\beta)^2}{2\alpha^2})\text{ (if Yi=0)}
+\end{aligned}$$
+
+Then we found that $w_i$ follows truncated normal distribution with mean $\alpha X_i\beta$ and variance $\alpha^2$.
+
+As for $\alpha^2$,
+
+$$\begin{aligned}
+P(\alpha^2|\beta,w, Y)&=P(w|\alpha^2,\beta)*P(\alpha^2)\\
+&=\frac{1}{\sqrt{2\pi\alpha^2}}\exp(-\frac{(w-\alpha X\beta)^2}{2\alpha^2})*(\alpha^2)^{-a-1}\exp(-b/\alpha^2)\\
+&\propto (\alpha^2)^{-a-3/2}\exp(-(\frac{(w-\alpha X\beta)^2}{2}+b)/\alpha^2)
+\end{aligned}$$
+
+This is a gamma kernel. Then we know that $\alpha^2\sim Gamma(\frac{2a+1}{2},\frac{2b+(w-\alpha X\beta)^2}{2})$
+
+```{r}
+px.da.mh.sim <- function(nsim=1000, burn=0,
+                         a=3, b=3, seed=1996,
+                         X=as.matrix(df[,-1]), 
+                         Y=as.matrix(df[,1])){
+  set.seed(seed)
+  
+  num_beta <- dim(df)[2]-1
+  nsim.total <- nsim*(1.0 + burn)
+  burn.num <- nsim*burn
+  
+  beta <- matrix(rep(0,num_beta),1)
+  beta.ch <- matrix(NA,nsim,num_beta)
+  z <- rep(0.5, length(Y))
+  z.ch <- matrix(NA,nsim,length(Y))
+  alpha.sq <- 1
+  alpha.sq.ch <- vector()
+  
+  range <- cbind(ifelse(Y==0, -Inf, 0),
+                 ifelse(Y==0, 0, Inf))
+  
+  for(i in 1:nsim.total){
+    #i=1
+    #w
+    w_info <- as.matrix(cbind(sqrt(alpha.sq)*X%*%t(beta), # w_mean
+                              sqrt(rep(alpha.sq,length(Y))), # w_sd
+                              range),) # truncated range
+    w <- apply(w_info, 1, 
+               function(info){rtruncnorm(1, a=info[3], b=info[4], 
+                                         mean = info[1], sd = info[2])})
+    
+    #beta
+    bmean <- solve(t(X)%*%X*sqrt(alpha.sq)+
+                     bvar_prior/sqrt(alpha.sq))%*%t(X)%*%w
+    bvar <- solve(t(X)%*%X+bvar_prior/alpha.sq)
+    beta <- rmvnorm(n=1, mean = bmean, sigma = bvar)
+    
+    #alpha.sq
+    alpha.sq <- rinvgamma(n = 1, shape = (2*a+1)/2, 
+                          scale = (2*b+t(w-sqrt(alpha.sq)*X%*%t(beta))%*%
+                                     (w-sqrt(alpha.sq)*X%*%t(beta)))/2)
+      
+    if(i > burn.num){ 
+      i1 <- i - burn.num
+      beta.ch[i1,] = beta
+      z.ch[i1,] = z
+      alpha.sq.ch[i1] = alpha.sq
+    }
+    print(c(alpha.sq, (2*b+t(w-X%*%t(beta))%*%(w-X%*%t(beta)))/2))
+  }
+  return(list(beta=beta.ch))
+}
+```
+
+```{r}
+burn=0.3
+nsim=3000
+
+# simulation
+mcmc.sim <- px.da.mh.sim(nsim=nsim, burn=burn)
+# plot
+par(mfrow=c(2,3))
+for(i in 1:5){
+  plot(1:nsim, mcmc.sim$beta[,i], type = "l")
+}
+par(mfrow=c(2,3))
+for(i in 1:5){
+  acf(mcmc.sim$beta[,i])
+}
+
+results <- apply(mcmc.sim$beta, 2, 
+                 function(x){quantile(x, c(0.025, 0.5, 0.975))}) %>% round(.,2)
+colnames(results) <- colnames(df)[-1]
+results %>%
+  kbl(caption = "Summary Table") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+
 
 ### (4)
 
 Assess mixing and convergence of the chains induced by the competing transition schemes implemented in 1,2 and 3. Comment on potential trade-offs involving: coding complexity, storage and cpu time.
 
-
+efficiency of the chain
 
