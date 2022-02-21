@@ -58,14 +58,14 @@ P(\beta|Y)&=P(Y|\beta)P(\beta)\\
 
 ```{r}
 bvar_prior <- solve(t(as.matrix(df[,-1])) %*% as.matrix(df[,-1])) * 100
-
+bvar_prior_inv <- t(as.matrix(df[,-1])) %*% as.matrix(df[,-1]) / 100
 .cal_ll <- function(beta){
   est <- data.frame(est=pnorm(as.matrix(df[,-1]) %*% t(beta)), y=df[,1])
   out <- apply(est, 1, function(x){ifelse(x[2]==0,1-x[1],x[1])})
-  out <- log(out) %>% sum - 1/2 * beta %*% bvar_prior %*% t(beta) 
+  out <- log(out) %>% sum - 1/2 * beta %*% bvar_prior_inv %*% t(beta) 
 }
 
-mh.sim <- function(nsim=1000, burn=0, delta=0.8, seed=1996){
+mh.sim <- function(nsim=1000, burn=0, delta=0.8, c=3, seed=1996){
   set.seed(seed)
   
   num_beta <- dim(df)[2]-1
@@ -75,16 +75,18 @@ mh.sim <- function(nsim=1000, burn=0, delta=0.8, seed=1996){
   
   beta <- matrix(rep(0,num_beta),1)
   beta.ch <- matrix(NA,nsim,num_beta)
-  bvar <- diag(num_beta)*10^(-10)
+  bvar <- diag(num_beta)*10^(-15)
   
   for(i in 1:nsim.total){
-    if(i <= 3000){
-      bvar <- (bvar * (i - 1) + t(beta) %*% beta + diag(num_beta)*10^(-10))/i
+    if(i <= 1500){
+      bvar <- (bvar * (i - 1) + t(beta) %*% beta)/i + diag(num_beta)*10^(-15)
+      beta_temp_2 <- rmvnorm(n=1, mean = beta, sigma = bvar_prior)
+      delta_temp <- delta_set[i] 
+    }else{
+      delta_temp <- 1
     }
-    beta_temp_1 <- rmvnorm(n=1, mean = beta, sigma = bvar)
-    beta_temp_2 <- rmvnorm(n=1, mean = beta, sigma = bvar_prior)
-    beta_temp <- beta_temp_1 * delta_set[nsim.total] + 
-      beta_temp_2 * (1-delta_set[nsim.total])
+    beta_temp_1 <- rmvnorm(n=1, mean = beta, sigma = c*bvar)
+    beta_temp <- beta_temp_1 * delta_temp + beta_temp_2 * (1-delta_temp)
     P0 <- .cal_ll(beta)
     P1 <- .cal_ll(beta_temp)
     ratio <- P1 - P0
@@ -105,7 +107,7 @@ burn=0.3
 nsim=5000
 
 # simulation
-mcmc.sim <- mh.sim(nsim=nsim, burn=burn, delta=0.7)
+mcmc.sim <- mh.sim(nsim=nsim, burn=burn, delta=0.7, c=1)
 # plot
 par(mfrow=c(2,3))
 for(i in 1:5){
