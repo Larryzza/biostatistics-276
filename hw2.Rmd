@@ -1,5 +1,5 @@
 ---
-title: "Biostat 276 Homework 1"
+title: "Biostat 276 Homework 2"
 author: "Zian ZHUANG"
 output:
   pdf_document:
