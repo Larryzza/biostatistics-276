@@ -69,7 +69,7 @@ According to (Roberts and Rosenthal, 2009), we also set,
 
 1) $\tilde\sum_{t}= \sum_{t}+\epsilon I$ to avoid degeneracies
 
-2) $Q(\beta_{t},\beta_{t+1})=\delta N(\beta_{t}, c*\tilde\sum_{t}) + (1-\delta) N(\beta_{t}, \sum_{0})$ in which $\delta\sim Binomial(p_\delta)$. here we set $p_\delta=0.8$, and set $\sum_{0}$ same as the prior $\sum$ of $\beta$.
+2) $Q(\beta_{t},\beta_{t+1})=\delta N(\beta_{t}, c*\tilde\sum_{t}) + (1-\delta) N(\beta_{t}, \sum_{0})$ in which $\delta\sim Binomial(p_\delta)$. here we set $p_\delta=0.7$, and set $\sum_{0}$ same as the prior $\sum$ of $\beta$.
 
 ```{r}
 bvar_prior <- solve(t(as.matrix(df[,-1])) %*% as.matrix(df[,-1])) * 100
@@ -93,7 +93,7 @@ mh.sim <- function(nsim=1000, burn=0, delta=0.8, c=3, seed=1996){
   bvar <- diag(num_beta)*10^(-15)
   
   for(i in 1:nsim.total){
-    if(i <= 1500){
+    if(i <= 1500){ #used adaptive algorithm on the first 1500 simulations 
       bvar <- (bvar * (i - 1) + t(beta) %*% beta)/i + diag(num_beta)*10^(-15)
       beta_temp_2 <- rmvnorm(n=1, mean = beta, sigma = bvar_prior)
       delta_temp <- delta_set[i] 
@@ -241,10 +241,10 @@ $$\begin{aligned}
 P(\beta|w,\alpha)&=P(w|\beta,\alpha)*P(\beta)\\
 &\propto\prod\exp(-\frac{(w_i-\alpha X_i\beta)^2}{2\alpha^2})*\exp(-\frac{1}{2}\beta^{'}\sum \beta)\\
 &= \exp(-\frac{1}{2\alpha^2}(\alpha^2\beta^{'}*X^{'}X\beta-2*\alpha\beta X^{'}w)-\frac{1}{2}*\beta^{'}\sum \beta)\\
-&= \exp(-\frac{1}{2}(\beta^{'}(X^{'}X+\sum/\alpha^2)\beta-2*\beta X^{'}w/\alpha))
+&= \exp(-\frac{1}{2}(\beta^{'}(X^{'}X+\sum)\beta-2*\beta X^{'}w/\alpha))
 \end{aligned}$$
 
-This is a normal kernel. Then we found that $\beta|z,\tau\sim N(\frac{X^{'}w}{\alpha X^{'}X+\sum/\alpha},\frac{1}{X^{'}X+\sum/\alpha^2})$.
+This is a normal kernel. Then we found that $\beta|z,\tau\sim N(\frac{X^{'}w}{\alpha X^{'}X+\alpha\sum},\frac{1}{X^{'}X+\sum})$.
 
 As for $w$,
 
@@ -260,20 +260,20 @@ As for $\alpha^2$,
 
 $$\begin{aligned}
 P(\alpha^2|\beta,w, Y)&=P(w|\alpha^2,\beta)*P(\alpha^2)\\
-&=\frac{1}{\sqrt{2\pi\alpha^2}}\exp(-\frac{(w-\alpha X\beta)^2}{2\alpha^2})*(\alpha^2)^{-a-1}\exp(-b/\alpha^2)\\
-&\propto (\alpha^2)^{-a-3/2}\exp(-(\frac{(w-\alpha X\beta)^2}{2}+b)/\alpha^2)
+&=(\frac{1}{\sqrt{2\pi\alpha^2}})^n\exp(-\frac{(w-\alpha X\beta)^2}{2\alpha^2})*(\alpha^2)^{-a-1}\exp(-b/\alpha^2)\\
+&\propto (\alpha^2)^{-a-n/2-1}\exp(-(\frac{(w-\alpha X\beta)^2}{2}+b)/\alpha^2)
 \end{aligned}$$
 
-This is difficult to make it a kernel. Then we consider use MH method to simulate $\alpha^2$
+This is difficult to treat it as a specific kernel. Then we consider use MH method to simulate $\alpha^2$. Here we use truncated normal proposal.
 
 ```{r}
-.alpha.sq.ll <- function(alpha.sq,beta,w,a,b,X){
-  out <- log(alpha.sq^(-a-2/3))-
+.alpha.sq.ll <- function(alpha.sq,beta,w,a,b,X,n){
+  out <- (-a-n/2-1)*log(alpha.sq)-
     ((2*b+t(w-sqrt(alpha.sq)*X%*%t(beta))%*%
         (w-sqrt(alpha.sq)*X%*%t(beta)))/2)/alpha.sq
   return(out)
 }
-px.da.mh.sim <- function(nsim=1000, burn=0, eta=1,
+px.da.mh.sim <- function(nsim=1000, burn=0, as_sd=1,
                          a=3, b=3, seed=1996,
                          X=as.matrix(df[,-1]), 
                          Y=as.matrix(df[,1])){
@@ -285,8 +285,8 @@ px.da.mh.sim <- function(nsim=1000, burn=0, eta=1,
   
   beta <- matrix(rep(0,num_beta),1)
   beta.ch <- matrix(NA,nsim,num_beta)
-  z <- rep(0.5, length(Y))
   alpha.sq <- 1
+  n <- length(Y)
   
   range <- cbind(ifelse(Y==0, -Inf, 0),
                  ifelse(Y==0, 0, Inf))
@@ -303,36 +303,38 @@ px.da.mh.sim <- function(nsim=1000, burn=0, eta=1,
     
     #beta
     bmean <- solve(t(X)%*%X*sqrt(alpha.sq)+
-                     bvar_prior/sqrt(alpha.sq))%*%t(X)%*%w
-    bvar <- solve(t(X)%*%X+bvar_prior/alpha.sq)
+                     bvar_prior*sqrt(alpha.sq))%*%t(X)%*%w
+    bvar <- solve(t(X)%*%X+bvar_prior)
     beta <- rmvnorm(n=1, mean = bmean, sigma = bvar)
     
     #alpha.sq
-    alpha.sq_temp <- rnorm(n = 1, mean = alpha.sq, sd = eta)
-    P0 <- .alpha.sq.ll(alpha.sq,beta,w,a,b,X)
-    P1 <- .alpha.sq.ll(alpha.sq_temp,beta,w,a,b,X)
-    ratio <- P1 - P0
+    as_temp <- rtruncnorm(1, a=0, b=Inf, mean = alpha.sq, sd = as_sd)
+    P0 <- .alpha.sq.ll(alpha.sq,beta,w,a,b,X,n)
+    P1 <- .alpha.sq.ll(as_temp,beta,w,a,b,X,n)
+    ratio <- P1 - P0 - log(dtruncnorm(as_temp,mean = alpha.sq, sd = as_sd)) +
+    log(dtruncnorm(alpha.sq,mean = as_temp, sd = as_sd))
+  
     if(log(runif(1)) < ratio){
-      alpha.sq <- alpha.sq_temp
+      alpha.sq <- as_temp
     }
       
     if(i > burn.num){ 
       i1 <- i - burn.num
-      beta.ch[i1,] = beta
+      beta.ch[i1,] <- beta
     }
   }
   return(list(beta=beta.ch))
 }
 ```
 
-simulation begin (set eta=1, a=3, b=3)
+simulation begin (set as_sd=1, a=3, b=3)
 
 ```{r}
 burn=0.3
 nsim=5000
 
 # simulation
-px.da.mh.mcmc.sim <- px.da.mh.sim(nsim=nsim, burn=burn)
+px.da.mh.mcmc.sim <- px.da.mh.sim(nsim=nsim, burn=burn,as_sd=1)
 
 # get results
 results.px <- apply(px.da.mh.mcmc.sim$beta, 2, 
@@ -385,14 +387,14 @@ results %>%
   kable_classic(full_width = F, html_font = "Cambria")
 ```
 
-As we can tell from the plots, 
+As we can tell from the plots, auto correlation of chain generated by `adaptive-mh` method decrease much slower than that of `px-da-mh` and `da-mh` method. In addition, auto correlation for some parameters' chains (e.g. $\beta_5$) of `px-da-mh` decrease slightly faster than that of `da-mh` method. As for values of $\beta$s, three methods provided largely consistent estimates.
 
 Calculate memory usage and running time of the chain:
 
 ```{r}
 # set same situation
 burn=0.3
-nsim=5000
+nsim=500
 
 # calculate memory usage
 mem.mh <- profmem(mh.sim(nsim=nsim, burn=burn))
@@ -415,4 +417,8 @@ stats <- microbenchmark(mh = {mh.sim(nsim=nsim, burn=burn)},
 stats
 autoplot(stats)
 ```
+
+As we can tell from the memory usage summary table, `adaptive-mh` method used the smallest memory. `da.mh` and `px.da.mh` methods used very similar memory. As for the efficiency, `da.mh` and `px.da.mh` have similar running time, which is nearly half of `adaptive-mh` method's.
+
+**Conclusion**: `px.da.mh` method had the best convergence of the chains. `da.mh` method operated most efficient and `adaptive-mh` method occupied the smallest memory.
 
