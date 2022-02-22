@@ -115,7 +115,7 @@ for(i in 1:5){
 }
 par(mfrow=c(2,3))
 for(i in 1:5){
-  acf(mcmc.sim$beta[,i])
+  acf(mcmc.sim$beta[,i],main = substitute(beta[x], list(x = i)))
 }
 
 results <- apply(mcmc.sim$beta, 2, 
@@ -215,7 +215,7 @@ for(i in 1:5){
 }
 par(mfrow=c(2,3))
 for(i in 1:5){
-  acf(mcmc.sim$beta[,i])
+  acf(mcmc.sim$beta[,i], main = substitute(beta[x], list(x = i)))
 }
 
 results <- apply(mcmc.sim$beta, 2, 
@@ -267,10 +267,16 @@ P(\alpha^2|\beta,w, Y)&=P(w|\alpha^2,\beta)*P(\alpha^2)\\
 &\propto (\alpha^2)^{-a-3/2}\exp(-(\frac{(w-\alpha X\beta)^2}{2}+b)/\alpha^2)
 \end{aligned}$$
 
-This is a gamma kernel. Then we know that $\alpha^2\sim Gamma(\frac{2a+1}{2},\frac{2b+(w-\alpha X\beta)^2}{2})$
+This is difficult to make it a kernel. Then we consider use MH method to simulate $\alpha^2$
 
 ```{r}
-px.da.mh.sim <- function(nsim=1000, burn=0,
+.alpha.sq.ll <- function(alpha.sq,beta,w,a,b,X){
+  out <- log(alpha.sq^(-a-2/3))-
+    ((2*b+t(w-sqrt(alpha.sq)*X%*%t(beta))%*%
+        (w-sqrt(alpha.sq)*X%*%t(beta)))/2)/alpha.sq
+  return(out)
+}
+px.da.mh.sim <- function(nsim=1000, burn=0, eta=1,
                          a=3, b=3, seed=1996,
                          X=as.matrix(df[,-1]), 
                          Y=as.matrix(df[,1])){
@@ -307,9 +313,13 @@ px.da.mh.sim <- function(nsim=1000, burn=0,
     beta <- rmvnorm(n=1, mean = bmean, sigma = bvar)
     
     #alpha.sq
-    alpha.sq <- rinvgamma(n = 1, shape = (2*a+1)/2, 
-                          scale = (2*b+t(w-sqrt(alpha.sq)*X%*%t(beta))%*%
-                                     (w-sqrt(alpha.sq)*X%*%t(beta)))/2)
+    alpha.sq_temp <- rnorm(n = 1, mean = alpha.sq, sd = eta)
+    P0 <- .alpha.sq.ll(alpha.sq,beta,w,a,b,X)
+    P1 <- .alpha.sq.ll(alpha.sq_temp,beta,w,a,b,X)
+    ratio <- P1 - P0
+    if(log(runif(1)) < ratio){
+      alpha.sq <- alpha.sq_temp
+    }
       
     if(i > burn.num){ 
       i1 <- i - burn.num
@@ -317,7 +327,6 @@ px.da.mh.sim <- function(nsim=1000, burn=0,
       z.ch[i1,] = z
       alpha.sq.ch[i1] = alpha.sq
     }
-    print(c(alpha.sq, (2*b+t(w-X%*%t(beta))%*%(w-X%*%t(beta)))/2))
   }
   return(list(beta=beta.ch))
 }
@@ -325,7 +334,7 @@ px.da.mh.sim <- function(nsim=1000, burn=0,
 
 ```{r}
 burn=0.3
-nsim=3000
+nsim=5000
 
 # simulation
 mcmc.sim <- px.da.mh.sim(nsim=nsim, burn=burn)
@@ -336,7 +345,7 @@ for(i in 1:5){
 }
 par(mfrow=c(2,3))
 for(i in 1:5){
-  acf(mcmc.sim$beta[,i])
+  acf(mcmc.sim$beta[,i], main = substitute(beta[x], list(x = i)))
 }
 
 results <- apply(mcmc.sim$beta, 2, 
@@ -346,8 +355,6 @@ results %>%
   kbl(caption = "Summary Table") %>%
   kable_classic(full_width = F, html_font = "Cambria")
 ```
-
-
 
 ### (4)
 
