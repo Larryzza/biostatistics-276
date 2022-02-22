@@ -23,11 +23,13 @@ library(lars)
 library(plotmo)
 library(mvtnorm)
 library(statmod)
+library(profmem)
 library(reshape2)
 library(MCMCpack)
 library(truncnorm)
 library(tidyverse)
 library(kableExtra)
+library(microbenchmark)
 ```
 <!-- Begin writing -->
 ## Bayesian Probit Regression
@@ -55,6 +57,18 @@ P(\beta|Y)&=P(Y|\beta)P(\beta)\\
 &=(\prod^n_{i=1}\Phi(X^{'}_i\beta)^{y_i}(1-\Phi(X^{'}_i\beta))^{1-y_i})P(\beta)\\
 &\propto(\prod^n_{i=1}\Phi(X^{'}_i\beta)^{y_i}(1-\Phi(X^{'}_i\beta))^{1-y_i})*\exp(-\frac{1}{2}\beta^{'}\sum \beta)
 \end{aligned}$$
+
+Then we design a adaptive proposal:
+
+- $\beta_{t+1}|\beta_{t} \sim N(\beta_{t}, c*\sum_{t})$
+
+in which $\sum_{t}=\frac{1}{t}\sum_{j=1}^t \beta_j\beta_j^{'}$.
+
+According to (Roberts and Rosenthal, 2009), we also set,
+
+1) $\tilde\sum_{t}= \sum_{t}+\epsilon I$ to avoid degeneracies
+
+2) $Q(\beta_{t},\beta_{t+1})=\delta N(\beta_{t}, c*\tilde\sum_{t}) + (1-\delta) N(\beta_{t}, \sum_{0})$ in which $\delta\sim Binomial(p_\delta)$. here we set $p_\delta=0.8$, and set $\sum_{0}$ same as the prior $\sum$ of $\beta$.
 
 ```{r}
 bvar_prior <- solve(t(as.matrix(df[,-1])) %*% as.matrix(df[,-1])) * 100
@@ -102,28 +116,20 @@ mh.sim <- function(nsim=1000, burn=0, delta=0.8, c=3, seed=1996){
 }
 ```
 
+simulation begin 
+
 ```{r}
 burn=0.3
 nsim=5000
 
 # simulation
-mcmc.sim <- mh.sim(nsim=nsim, burn=burn, delta=0.7, c=1)
-# plot
-par(mfrow=c(2,3))
-for(i in 1:5){
-  plot(1:nsim, mcmc.sim$beta[,i], type="l")
-}
-par(mfrow=c(2,3))
-for(i in 1:5){
-  acf(mcmc.sim$beta[,i],main = substitute(beta[x], list(x = i)))
-}
+mh.mcmc.sim <- mh.sim(nsim=nsim, burn=burn, delta=0.7, c=1)
 
-results <- apply(mcmc.sim$beta, 2, 
-                 function(x){quantile(x, c(0.025, 0.5, 0.975))}) %>% round(.,2)
-colnames(results) <- colnames(df)[-1]
-results %>%
-  kbl(caption = "Summary Table") %>%
-  kable_classic(full_width = F, html_font = "Cambria")
+# get results
+results.mh <- apply(mh.mcmc.sim$beta, 2, 
+                    function(x){
+                      quantile(x, c(0.025, 0.5, 0.975))}) %>% round(.,2) %>%
+              apply(., 2, function(x){paste0(x[2]," (", x[1],", ",x[3],")")})
 ```
 
 ### (2) 
@@ -171,9 +177,7 @@ da.mh.sim <- function(nsim=1000, burn=0, seed=1996,
   
   beta <- matrix(rep(0,num_beta),1)
   beta.ch <- matrix(NA,nsim,num_beta)
-
   z <- rep(0.5, length(Y))
-  z.ch <- matrix(NA,nsim,length(Y))
   
   range <- cbind(ifelse(Y==0, -Inf, 0),
                  ifelse(Y==0, 0, Inf))
@@ -202,28 +206,20 @@ da.mh.sim <- function(nsim=1000, burn=0, seed=1996,
 }
 ```
 
+simulation begin 
+
 ```{r}
 burn=0.3
 nsim=5000
 
 # simulation
-mcmc.sim <- da.mh.sim(nsim=nsim, burn=burn)
-# plot
-par(mfrow=c(2,3))
-for(i in 1:5){
-  plot(1:nsim, mcmc.sim$beta[,i], type="l")
-}
-par(mfrow=c(2,3))
-for(i in 1:5){
-  acf(mcmc.sim$beta[,i], main = substitute(beta[x], list(x = i)))
-}
+da.mh.mcmc.sim <- da.mh.sim(nsim=nsim, burn=burn)
 
-results <- apply(mcmc.sim$beta, 2, 
-                 function(x){quantile(x, c(0.025, 0.5, 0.975))}) %>% round(.,2)
-colnames(results) <- colnames(df)[-1]
-results %>%
-  kbl(caption = "Summary Table") %>%
-  kable_classic(full_width = F, html_font = "Cambria")
+# get results
+results.da <- apply(da.mh.mcmc.sim$beta, 2, 
+                    function(x){
+                      quantile(x, c(0.025, 0.5, 0.975))}) %>% round(.,2) %>%
+              apply(., 2, function(x){paste0(x[2]," (", x[1],", ",x[3],")")})
 ```
 
 ### (3)
@@ -289,9 +285,7 @@ px.da.mh.sim <- function(nsim=1000, burn=0, eta=1,
   beta <- matrix(rep(0,num_beta),1)
   beta.ch <- matrix(NA,nsim,num_beta)
   z <- rep(0.5, length(Y))
-  z.ch <- matrix(NA,nsim,length(Y))
   alpha.sq <- 1
-  alpha.sq.ch <- vector()
   
   range <- cbind(ifelse(Y==0, -Inf, 0),
                  ifelse(Y==0, 0, Inf))
@@ -324,41 +318,100 @@ px.da.mh.sim <- function(nsim=1000, burn=0, eta=1,
     if(i > burn.num){ 
       i1 <- i - burn.num
       beta.ch[i1,] = beta
-      z.ch[i1,] = z
-      alpha.sq.ch[i1] = alpha.sq
     }
   }
   return(list(beta=beta.ch))
 }
 ```
 
+simulation begin (set eta=1, a=3, b=3)
+
 ```{r}
 burn=0.3
 nsim=5000
 
 # simulation
-mcmc.sim <- px.da.mh.sim(nsim=nsim, burn=burn)
-# plot
-par(mfrow=c(2,3))
-for(i in 1:5){
-  plot(1:nsim, mcmc.sim$beta[,i], type = "l")
-}
-par(mfrow=c(2,3))
-for(i in 1:5){
-  acf(mcmc.sim$beta[,i], main = substitute(beta[x], list(x = i)))
-}
+px.da.mh.mcmc.sim <- px.da.mh.sim(nsim=nsim, burn=burn)
 
-results <- apply(mcmc.sim$beta, 2, 
-                 function(x){quantile(x, c(0.025, 0.5, 0.975))}) %>% round(.,2)
-colnames(results) <- colnames(df)[-1]
-results %>%
-  kbl(caption = "Summary Table") %>%
-  kable_classic(full_width = F, html_font = "Cambria")
+# get results
+results.px <- apply(px.da.mh.mcmc.sim$beta, 2, 
+                    function(x){
+                      quantile(x, c(0.025, 0.5, 0.975))}) %>% round(.,2) %>%
+              apply(., 2, function(x){paste0(x[2]," (", x[1],", ",x[3],")")})
 ```
 
 ### (4)
 
 Assess mixing and convergence of the chains induced by the competing transition schemes implemented in 1,2 and 3. Comment on potential trade-offs involving: coding complexity, storage and cpu time.
 
-efficiency of the chain
+Check mixing and convergence of the chains:
+
+```{r}
+# plots for mh method
+par(mfrow=c(2,3))
+for(i in 1:5){
+  plot(1:nsim, mh.mcmc.sim$beta[,i], type="l")
+}
+par(mfrow=c(2,3))
+for(i in 1:5){
+  acf(mh.mcmc.sim$beta[,i],main = substitute(beta[x], list(x = i)))
+}
+
+# plots for da-mh method
+par(mfrow=c(2,3))
+for(i in 1:5){
+  plot(1:nsim, da.mh.mcmc.sim$beta[,i], type="l")
+}
+par(mfrow=c(2,3))
+for(i in 1:5){
+  acf(da.mh.mcmc.sim$beta[,i], main = substitute(beta[x], list(x = i)))
+}
+
+# plots for px-da-mh method
+par(mfrow=c(2,3))
+for(i in 1:5){
+  plot(1:nsim, px.da.mh.mcmc.sim$beta[,i], type = "l")
+}
+par(mfrow=c(2,3))
+for(i in 1:5){
+  acf(px.da.mh.mcmc.sim$beta[,i], main = substitute(beta[x], list(x = i)))
+}
+
+results <- rbind(results.mh, results.da, results.px) %>% as.data.frame
+colnames(results) <- colnames(df)[-1]
+results %>%
+  kbl(caption = "Beta Summary Table (95% CI)") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+As we can tell from the plots, 
+
+Calculate memory usage and running time of the chain:
+
+```{r}
+# set same situation
+burn=0.3
+nsim=5000
+
+# calculate memory usage
+mem.mh <- profmem(mh.sim(nsim=nsim, burn=burn))
+mem.da.mh <- profmem(da.mh.sim(nsim=nsim, burn=burn))
+mem.px.da.mh <- profmem(px.da.mh.sim(nsim=nsim, burn=burn))
+
+mem_use <- data.frame(method=c("adaptive-mh","da.mh","px.da.mh"),
+                      memory_usage=c(mem.mh$bytes %>% sum(na.rm = T),
+                                     mem.da.mh$bytes %>% sum(na.rm = T),
+                                     mem.px.da.mh$bytes %>% sum(na.rm = T)))
+mem_use %>%
+  kbl(caption = "Memory Usage Summary Table") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+# calculate running time
+stats <- microbenchmark(mh = {mh.sim(nsim=nsim, burn=burn)},
+                        da.mh = {da.mh.sim(nsim=nsim, burn=burn)},
+                        px.da.mh = {px.da.mh.sim(nsim=nsim, burn=burn)},
+                        times = 10, unit = "ms")
+stats
+autoplot(stats)
+```
 
