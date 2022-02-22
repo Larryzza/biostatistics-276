@@ -31,6 +31,7 @@ library(tidyverse)
 library(kableExtra)
 library(microbenchmark)
 ```
+
 <!-- Begin writing -->
 ## Bayesian Probit Regression
 
