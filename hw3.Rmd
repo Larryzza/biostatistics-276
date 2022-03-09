@@ -444,7 +444,7 @@ hmc.sim.gibbs <- function(initial_value, nsim=1000, burn=0.5, seed=199609){
 ```
 
 ```{r}
-nsim <- 1000; m <- c(rep(100,5),rep(10,2)); epsilon <- 0.3; nn <- 50
+nsim <- 5000; m <- c(rep(100,5),rep(10,2)); epsilon <- 0.3; nn <- 30
 results_hmc <- hmc.sim.gibbs(initial_value, nsim=nsim, burn=0.5) 
 df <- Reduce("cbind",results_hmc) %>% as.data.frame
 names(df) <- names(results_gibbs)
