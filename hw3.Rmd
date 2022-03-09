@@ -1,0 +1,477 @@
+---
+title: "Biostat 276 Homework 3"
+author: "Zian ZHUANG"
+output:
+  pdf_document:
+    toc: false
+---
+
+<!-- Setup -->
+<style type="text/css">
+body{ /* Normal  */
+      font-size: 17px;
+      font-family: "Times New Roman";
+  }
+h1,h2,h3,h4,h5,h6{
+  font-family: "Times New Roman";
+}
+</style>
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, cache.lazy = FALSE)
+rm(list = ls())
+library(lme4)
+library(mvtnorm)
+library(statmod)
+library(reshape2)
+library(MCMCpack)
+library(truncnorm)
+library(tidyverse)
+library(kableExtra)
+```
+
+<!-- Begin writing -->
+## Bayesian Mixed-Effects Model
+
+Consider the dataset `sleepstudy` available from the R package `lme4`. These data, reports a longitudinal study of reaction times after sleep deprivation. Let $y_{ij}$ be the reaction of subject $i$ after $t_ij$ days of sleep deprivation. We assume:
+
+$$\begin{aligned}
+y_{ij}|\mu_{ij}\sim N(\mu_{ij},\sigma^2)
+\end{aligned}$$
+
+with $\mu_{ij}=\beta_0+\beta_1*t_{ij}+b_{i0}+b_{i1}t_{ij},b_{i0}\sim N(0,\alpha_0)$ independent of $b_{i1}\sim N(0,\alpha_1)$ for all $i$. The model is completed with the following priors:
+
+$$\begin{aligned}
+\beta_0\sim& N(0,100)\\
+\beta_1\sim& N(0,100)\\
+\alpha_0\sim& IG(1,1)\\
+\alpha_1\sim& IG(1,1)\\
+\sigma^2\sim& IG(0.01,0.01)
+\end{aligned}$$
+
+where all IG priors use the shape, scale parametrization.
+
+```{r}
+data(sleepstudy)
+index <- table(sleepstudy$Subject)
+sleepstudy$index <- rep(1:dim(index)[1],times=index)
+```
+
+
+### 1)
+
+Describe and implement a Gibbs sampling strategy for MCMC simulation from the posterior distribution.
+
+$$\begin{aligned}
+p(\beta_0,\beta_1,\alpha_0,\alpha_1,\sigma^2|y)
+\end{aligned}$$
+
+Derive posterior summaries for all population level parameters, including posterior means, posterior SDs and, 95% credible intervals.
+
+We have,
+
+$$\begin{aligned}
+P(\beta_0,\beta_1,\alpha_0,\alpha_1,\sigma^2|y)&=P(y|\beta_0,\beta_1,\alpha_0,\alpha_1,\sigma^2)*P(\beta_0,\beta_1,\alpha_0,\alpha_1,\sigma^2)\\
+&=P(y|\mu_{ij})P(b_{i0}|\alpha_0)P(b_{i1}|\alpha_1)P(\beta_0)P(\beta_1)P(\alpha_0)P(\alpha_1)P(\sigma^2)P(b_{i0})P(b_{i1})
+\end{aligned}$$
+
+Then we can calculate full conditional posterior distributions. As for $\beta_0$,
+
+Define $y^*_{ij}=y_{ij}-(\beta_1*t_{ij}+b_{i0}+b_{i1}t_{ij})$,
+
+$$\begin{aligned}
+p(\beta_0|\beta_1,\alpha_0,\alpha_1,\sigma^2,y)&\propto \exp(-\frac{\sum_i\sum_j (y^*_{ij}-\beta_0)^2}{2\sigma^2})\exp(-\frac{\beta_0^2}{2*100})\\
+&=\exp(-\frac{\sum\sum (y^*_{ij})^2-\sum\sum2y^*_{ij}\beta_0+n\beta_0^2+\sigma^2\beta_0^2/100}{2\sigma^2})\\
+&\propto\exp(-\frac{1}{2}((\frac{n+\sigma^2/100}{\sigma^2})\beta_0^2-2\beta_0\frac{\sum\sum y^*_{ij}}{\sigma^2}))
+\end{aligned}$$
+
+We found that this is a normal kernel. Then we know $\beta_0|\beta_1,\alpha_0,\alpha_1,\sigma^2,y\sim N(\frac{\sum\sum y^*_{ij}}{n+\sigma^2/100},\frac{\sigma^2}{n+\sigma^2/100})$
+
+For $\beta_1$, we define $y^*_{ij}=y_{ij}-(\beta_0+b_{i0}+b_{i1}t_{ij})$,
+
+$$\begin{aligned}
+p(\beta_1|\beta_0,\alpha_0,\alpha_1,\sigma^2,y)&\propto \exp(-\frac{\sum_i\sum_j (y^*_{ij}-\beta_1t_{ij})^2}{2\sigma^2})\exp(-\frac{\beta_1^2}{2*100})\\
+&=\exp(-\frac{\sum\sum (y^*_{ij})^2-\sum\sum2y^*_{ij}\beta_1t_{ij}+\beta_1^2\sum\sum t_{ij}^2+\sigma^2\beta_1^2/100}{2\sigma^2})\\
+&\propto\exp(-\frac{1}{2}((\frac{\sum\sum t_{ij}^2+\sigma^2/100}{\sigma^2})\beta_1^2-2\beta_1\frac{\sum\sum y^*_{ij}t_{ij}}{\sigma^2}))
+\end{aligned}$$
+
+We found that this is a normal kernel. Then we know $\beta_1|\beta_0,\alpha_0,\alpha_1,\sigma^2,y\sim N(\frac{\sum\sum y^*_{ij}t_{ij}}{\sum\sum t_{ij}^2+\sigma^2/100},\frac{\sigma^2}{\sum\sum t_{ij}^2+\sigma^2/100})$
+
+For $\alpha_{0}$, we have,
+
+$$\begin{aligned}
+p(\alpha_0|\beta_1, \beta_0,\alpha_1,\sigma^2,y)&\propto (\frac{1}{\sqrt{2\pi\alpha_0}})^i\exp(-\frac{\sum_i b_{i0}^2}{2\alpha_0})*\alpha_0^{-1-1}\exp(-\frac{1}{\alpha_0}) \\
+&= \alpha_0^{-\frac{i}{2}-1-1}\exp(-\frac{(\sum_i b_{i0}^2+2)/2}{\alpha_0})
+\end{aligned}$$
+
+We found that this is a inverse gamma kernel. Then we know $\alpha_0|\beta_1, \beta_0,\alpha_1,\sigma^2,y\sim IG(\frac{i}{2}+1,(\sum_i b_{i0}^2+2)/2)$.
+
+Similarly we can get $\alpha_1|\beta_1, \beta_0,\alpha_0,\sigma^2,y\sim IG(\frac{i}{2}+1,(\sum_i b_{i1}^2+2)/2)$.
+
+As for $b_{i0}$, we define $y^*_{ij}=y_{ij}-(\beta_0+\beta_1t_{ij}+b_{i1}t_{ij})$,
+
+$$\begin{aligned}
+p(b_{i0}|\beta_0,\beta_1,\alpha_0,\alpha_1,\sigma^2,y)&\propto \exp(-\frac{\sum_j (y^*_{ij}-b_{i0})^2}{2\sigma^2})\exp(-\frac{b_{i0}^2}{2\alpha_0})\\
+&=\exp(-\frac{\sum_j (y^*_{ij})^2-\sum_j2y^*_{ij}b_{i0}+j*b_{i0}^2}{2\sigma^2}-\frac{b_{i0}^2}{2\alpha_0})\\
+&\propto\exp(-\frac{1}{2}((\frac{j}{\sigma^2}+\frac{1}{\alpha_0})b_{i0}^2-2b_{i0}\frac{\sum_j y^*_{ij}}{\sigma^2}))
+\end{aligned}$$
+
+We found that this is a normal kernel. Then we know $b_{i0}|\beta_0,\beta_1,\alpha_0,\alpha_1,\sigma^2,y\sim N(\frac{\sum_j y^*_{ij}}{j+\sigma^2/\alpha_0},\frac{1}{\frac{j}{\sigma^2}+\frac{1}{\alpha_0}})$
+
+
+As for $b_{i1}$, we define $y^*_{ij}=y_{ij}-(\beta_0+\beta_1+b_{i0})$,
+
+$$\begin{aligned}
+p(b_{i1}|\beta_0,\beta_1,\alpha_0,\alpha_1,\sigma^2,y)&\propto \exp(-\frac{\sum_j (y^*_{ij}-b_{i1}t_{ij})^2}{2\sigma^2})\exp(-\frac{b_{i1}^2}{2\alpha_1})\\
+&=\exp(-\frac{\sum_j (y^*_{ij})^2-\sum_j2y^*_{ij}b_{i1}t_{ij}+b_{i1}^2\sum_jt_{ij}^2}{2\sigma^2}-\frac{b_{i1}^2}{2\alpha_1})\\
+&\propto\exp(-\frac{1}{2}((\frac{\sum_jt_{ij}^2}{\sigma^2}+\frac{1}{\alpha_1})b_{i1}^2-2b_{i1}\frac{\sum_j y^*_{ij}t_{ij}}{\sigma^2}))
+\end{aligned}$$
+
+We found that this is a normal kernel. Then we know $b_{i1}|\beta_0,\beta_1,\alpha_0,\alpha_1,\sigma^2,y\sim N(\frac{\sum_j y^*_{ij}t_{ij}}{\sum_jt_{ij}^2+\sigma^2/\alpha_1},\frac{1}{\frac{\sum_jt_{ij}^2}{\sigma^2}+\frac{1}{\alpha_1}})$
+
+As for $\sigma^2$, we have,
+
+$$\begin{aligned}
+p(\sigma^2|\beta_0,\beta_1,\alpha_0,\alpha_1,y)&\propto(\frac{1}{\sqrt{2\pi\sigma^2}})^n\exp(-\frac{\sum\sum (y_{ij}-\mu_{ij})^2}{2\sigma^2})(\sigma^2)^{-0.01-1}\exp(-\frac{0.01}{\sigma^2})\\
+&= (\sigma^2)^{-\frac{n}{2}-0.01-1}\exp(-\frac{(\sum\sum (y_{ij}-\mu_{ij})^2+0.02)/2}{\sigma^2})
+\end{aligned}$$
+
+We found that this is a inverse gamma kernel. Then we know $\sigma^2|\beta_0,\beta_1,\alpha_0,\alpha_1,y\sim IG(\frac{n}{2}+0.01, \frac{\sum\sum (y_{ij}-\mu_{ij})^2+0.02}{2})$.
+
+After obtaining conditional posterior distributions for all parameters, we can apply Markov Chain Monte Carlo (Gibbs) algorithm to sample pramaters.
+
+```{r}
+initial_value <- list(beta0=0, beta1=0,
+                      alpha0=1, alpha1=1,
+                      bi0=rep(0,unique(sleepstudy$index) %>% length),
+                      bi1=rep(0,unique(sleepstudy$index) %>% length),
+                      sigma_sq=1)
+mcmc.sim.gibbs <- function(initial_value, nsim=1000, burn=0,
+                           Y=sleepstudy$Reaction, D=sleepstudy$Days,
+                           I=sleepstudy$index, seed=199609){
+  set.seed(seed)
+  nsim.total <- nsim*(1.0 + burn)
+  burn.num <- nsim*burn
+  n <- sum(index)
+ 
+  for(i in names(initial_value)){
+    assign(i, initial_value[[i]])
+    ifelse(grepl("bi",i)==F,
+           assign(paste0(i,".ch"), vector()),
+           assign(paste0(i,".ch"), matrix(NA,nsim,length(bi0))))
+  } 
+
+  for(i in 1:nsim.total){
+    # i=1
+    
+    ## beta0
+    temp_y <- Y - (beta1*D+rep(bi0,times=index)+rep(bi1,times=index)*D)
+    mean_beta0 <- sum(temp_y)/(n+sigma_sq/100)
+    var_beta0 <- sigma_sq/(n+sigma_sq/100)
+    beta0 <- rnorm(n = 1, mean = mean_beta0, sd = sqrt(var_beta0))
+    
+    ## beta1
+    temp_y <- Y - (beta0+rep(bi0,times=index)+rep(bi1,times=index)*D)
+    mean_beta1 <- sum(temp_y*D)/(sum(D^2)+sigma_sq/100)
+    var_beta1 <- sigma_sq/(sum(D^2)+sigma_sq/100)
+    beta1 <- rnorm(n = 1, mean = mean_beta1, sd = sqrt(var_beta1))
+    
+    ## alpha0
+    alpha0 <- rinvgamma(n = 1, shape = length(index)/2+1, 
+                        scale = sum(bi0^2)/2+1)
+    
+    ## alpha1
+    alpha1 <- rinvgamma(n = 1, shape = length(index)/2+1, 
+                        scale = sum(bi1^2)/2+1)
+    
+    ## sigma_sq
+    mu <- beta0+beta1*D+rep(bi0,times=index)+rep(bi1,times=index)*D
+    sigma_sq <- rinvgamma(n = 1, shape = n/2+0.01, 
+                          scale = sum((Y-mu)^2)/2+0.01)
+    
+    ## bi0
+    temp_y <- Y - (beta0+beta1*D+rep(bi1,times=index)*D)
+    bi0 <- sapply(unique(I), function(x){
+      mean_bi0 <- sum(temp_y[I==x])/(as.numeric(index[x])+sigma_sq/alpha0)
+      var_bi0 <- 1/(as.numeric(index[x])/sigma_sq+1/alpha0)
+      return(rnorm(n = 1, mean = mean_bi0, sd = sqrt(var_bi0)))
+    })
+    
+    ## bi1
+    temp_y <- Y - (beta0+beta1*D+rep(bi0,times=index))
+    bi1 <- sapply(unique(I), function(x){
+      mean_bi1 <- sum((D*temp_y)[I==x])/(sum((D^2)[I==x])+sigma_sq/alpha1)
+      var_bi1 <- 1/(sum((D^2)[I==x])/sigma_sq+1/alpha1)
+      return(rnorm(n = 1, mean = mean_bi1, sd = sqrt(var_bi1)))
+    })
+    
+    if(i > burn.num){
+      i1 <- i - burn.num
+      bi0.ch[i1,] <- bi0
+      bi1.ch[i1,] <- bi1
+      sigma_sq.ch[i1] <- sigma_sq
+      alpha1.ch[i1] <- alpha1
+      alpha0.ch[i1] <- alpha0
+      beta0.ch[i1] <- beta0
+      beta1.ch[i1] <- beta1
+    }
+  }
+  return(list(sigma_sq=sigma_sq.ch, alpha1=alpha1.ch, alpha0=alpha0.ch,
+              beta0=beta0.ch, beta1=beta1.ch))
+}
+```
+
+simulation begin
+
+```{r}
+nsim <- 30000
+results_gibbs <- mcmc.sim.gibbs(initial_value, nsim=nsim, burn=0.5) 
+df <- Reduce("cbind",results_gibbs) %>% as.data.frame
+names(df) <- names(results_gibbs)
+# get results
+results_mean <- apply(df, 2, function(x){quantile(x, c(0.025, 0.5, 0.975))}) %>%
+                round(.,2) %>%
+                apply(., 2, function(x){paste0(x[2]," (", x[1],", ",x[3],")")})
+results_sd <- apply(df, 2, sd) %>% round(.,2)
+par(mfrow=c(2,3))
+for(i in 1:5){
+  plot(1:nsim, df[,i], type="l")
+}
+par(mfrow=c(2,3))
+for(i in 1:5){
+  acf(df[,i])
+}
+cbind(results_mean, results_sd) %>%
+  kbl(caption = "Summary Table",
+      col.names = c("mean(95% CI)","sd")) %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+### 2) 
+
+Implement an HMC sampler for MCMC simulation for the posterior distribution in (1). Compare all posterior summaries with the estimates obtained using Gibbs sampling.
+
+Firstly we need to calculate the $\nabla U(x)$, in which $U(x) = -\log\pi(x)$.
+
+As for $\beta_0$, define $y^*_{ij}=y_{ij}-(\beta_1*t_{ij}+b_{i0}+b_{i1}t_{ij})$, from (1) we know that 
+
+$$\begin{aligned}
+p(\beta_0|\beta_1,\alpha_0,\alpha_1,\sigma^2,y)&\propto\exp(-\frac{1}{2}((\frac{n+\sigma^2/100}{\sigma^2})\beta_0^2-2\beta_0\frac{\sum\sum y^*_{ij}}{\sigma^2}))\\
+ \nabla(-\log p(\beta_0|\beta_1,\alpha_0,\alpha_1,\sigma^2,y))&=\beta_0(\frac{n+\sigma^2/100}{\sigma^2})-\frac{\sum\sum y^*_{ij}}{\sigma^2}
+\end{aligned}$$
+
+For $\beta_1$, we define $y^*_{ij}=y_{ij}-(\beta_0+b_{i0}+b_{i1}t_{ij})$, from (1) we know that 
+
+$$\begin{aligned}
+p(\beta_1|\beta_0,\alpha_0,\alpha_1,\sigma^2,y)&\propto \exp(-\frac{1}{2}((\frac{\sum\sum t_{ij}^2+\sigma^2/100}{\sigma^2})\beta_1^2-2\beta_1\frac{\sum\sum y^*_{ij}t_{ij}}{\sigma^2}))\\
+\nabla(-\log p(\beta_1|\beta_0,\alpha_0,\alpha_1,\sigma^2,y))&=\beta_1(\frac{\sum\sum t_{ij}^2+\sigma^2/100}{\sigma^2})-\frac{\sum\sum y^*_{ij}t_{ij}}{\sigma^2}
+\end{aligned}$$
+
+For $\alpha_{0}$, from (1) we have,
+
+$$\begin{aligned}
+p(\alpha_0|\beta_1, \beta_0,\alpha_1,\sigma^2,y)&\propto \alpha_0^{-\frac{i}{2}-1-1}\exp(-\frac{(\sum_i b_{i0}^2+2)/2}{\alpha_0})\\
+\nabla(-\log p(\alpha_0|\beta_1,\beta_0, \alpha_1,\sigma^2,y))&=-(-\frac{i}{2}-2)\frac{\alpha_0^{-\frac{i}{2}-3}}{\alpha_0^{-\frac{i}{2}-2}}-\frac{(\sum_i b_{i0}^2+2)/2}{\alpha_0^2}\\
+&=\frac{\frac{i}{2}+2}{\alpha_0}-\frac{(\sum_i b_{i0}^2+2)/2}{\alpha_0^2}
+\end{aligned}$$
+
+Similarly, we got,
+$$\begin{aligned}
+p(\alpha_1|\beta_0, \beta_0,\alpha_1,\sigma^2,y)&\propto \alpha_1^{-\frac{i}{2}-1-1}\exp(-\frac{(\sum_i b_{i1}^2+2)/2}{\alpha_1})\\
+\nabla(-\log p(\alpha_1|\beta_1,\beta_0, \alpha_0,\sigma^2,y))&=-(-\frac{i}{2}-2)\frac{\alpha_1^{-\frac{i}{2}-3}}{\alpha_1^{-\frac{i}{2}-2}}-\frac{(\sum_i b_{i1}^2+2)/2}{\alpha_1^2}\\
+&=\frac{\frac{i}{2}+2}{\alpha_1}-\frac{(\sum_i b_{i1}^2+2)/2}{\alpha_1^2}
+\end{aligned}$$
+
+As for $b_{i0}$, we define $y^*_{ij}=y_{ij}-(\beta_0+\beta_1t_{ij}+b_{i1}t_{ij})$, from (1) we have,
+
+$$\begin{aligned}
+p(b_{i0}|\beta_0,\beta_1,\alpha_0,\alpha_1,\sigma^2,y)&\propto \exp(-\frac{1}{2}((\frac{j}{\sigma^2}+\frac{1}{\alpha_0})b_{i0}^2-2b_{i0}\frac{\sum_j y^*_{ij}}{\sigma^2}))\\
+\nabla(-\log p(b_{i0}|\alpha_1,\beta_1,\beta_0, \alpha_0,\sigma^2,y))&=(\frac{j}{\sigma^2}+\frac{1}{\alpha_0})b_{i0}-\frac{\sum_j y^*_{ij}}{\sigma^2}
+\end{aligned}$$
+
+As for $b_{i1}$, we define $y^*_{ij}=y_{ij}-(\beta_0+\beta_1+b_{i0})$, from (1) we have,
+
+$$\begin{aligned}
+p(b_{i1}|\beta_0,\beta_1,\alpha_0,\alpha_1,\sigma^2,y)&\propto \exp(-\frac{1}{2}((\frac{\sum_jt_{ij}^2}{\sigma^2}+\frac{1}{\alpha_1})b_{i1}^2-2b_{i1}\frac{\sum_j y^*_{ij}t_{ij}}{\sigma^2}))\\
+\nabla(-\log p(b_{i1}|\alpha_1,\beta_1,\beta_0, \alpha_0,\sigma^2,y))&=(\frac{\sum_jt_{ij}^2}{\sigma^2}+\frac{1}{\alpha_1})b_{i1}-\frac{\sum_j y^*_{ij}t_{ij}}{\sigma^2}
+\end{aligned}$$
+
+As for $\sigma^2$, from (1) we have,
+
+$$\begin{aligned}
+p(\sigma^2|\beta_0,\beta_1,\alpha_0,\alpha_1,y)&\propto(\sigma^2)^{-\frac{n}{2}-0.01-1}\exp(-\frac{(\sum\sum (y_{ij}-\mu_{ij})^2+0.02)/2}{\sigma^2})\\
+\nabla(-\log p(\sigma^2|\alpha_1,\beta_1,\beta_0, \alpha_0,y))&=-(-\frac{n}{2}-1.01)\frac{(\sigma^2)^{-\frac{n}{2}-2.01}}{(\sigma^2)^{-\frac{n}{2}-1.01}}-\frac{(\sum\sum (y_{ij}-\mu_{ij})^2+0.02)/2}{(\sigma^2)^2}\\
+&=\frac{\frac{n}{2}+1.01}{\sigma^2}-\frac{(\sum\sum (y_{ij}-\mu_{ij})^2+0.02)/2}{(\sigma^2)^2}
+\end{aligned}$$
+
+
+Here we use `Leapfrog path`,
+
+```{r}
+gx <- function(input){
+  for(i in names(input))assign(i, input[[i]])
+  
+  mu <- beta0+beta1*D+rep(bi0,times=index)+rep(bi1,times=index)*D
+  temp_y_beta0 <- Y - (mu-beta0)
+  temp_y_beta1 <- Y - (mu-beta1*D)
+  temp_y_bi0 <- Y - (mu-rep(bi0,times=index))
+  temp_y_bi1 <- Y - (mu-rep(bi1,times=index)*D)
+  
+  dbeta0 <- beta0*(n+sigma_sq/100)/sigma_sq-sum(temp_y_beta0)/sigma_sq
+  dbeta1 <- beta1*(sum(D^2)+sigma_sq/100)/sigma_sq-sum(temp_y_beta1*D)/sigma_sq
+  dalpha0 <- (length(index)+2)/alpha0-(sum(bi0^2)+2)/(2*alpha0^2)
+  dalpha1 <- (length(index)+2)/alpha1-(sum(bi1^2)+2)/(2*alpha1^2)
+  dbi0 <- sapply(unique(I), function(x){
+    (as.numeric(index)[x]/sigma_sq+1/alpha0)*bi0[x]-sum(temp_y_bi0[I==x])/sigma_sq})
+  dbi1 <- sapply(unique(I), function(x){
+    (sum((D^2)[I==x])/sigma_sq+1/alpha1)*bi1[x]-sum((D*temp_y_bi1)[I==x])/sigma_sq})
+  dsigma_sq <- (n/2+1.01)/sigma_sq-(sum((Y-mu)^2)+0.02)/(2*sigma_sq^2)
+  
+  return(list(dbeta0, dbeta1, dalpha0, dalpha1, dbi0, dbi1, dsigma_sq))
+}
+
+
+leap <- function(input_var, d0, epsilon=1, nn=1, m=rep(1,7)){
+  xx <- as.list(1:nn)
+  dd <- as.list(1:nn)
+  xx[[1]] <- input_var
+  dd[[1]] <- d0
+  for(i in 1:(nn-1)){
+     #i=1
+     temp <- lapply(gx(xx[[i]]), function(x)0.5*epsilon*x)
+     dd[[i+1]] <- lapply(c(1:7) %>% as.list,function(x){dd[[i]][[x]]-temp[[x]]})
+     
+     xx[[i+1]] <- lapply(c(1:7) %>% as.list, function(x){
+       xx[[i]][[x]]+epsilon*dd[[i+1]][[x]]/(2*m[x]^2)})
+     names(xx[[i+1]]) <- names(input_var)
+     
+     temp <- lapply(gx(xx[[i+1]]), function(x)0.5*epsilon*x)
+     dd[[i+1]] <- lapply(c(1:7) %>% as.list,function(x){dd[[i+1]][[x]]-temp[[x]]})
+  }
+  return(xx[[nn]])
+}
+
+```
+
+```{r}
+n <- sum(index)
+Y <- sleepstudy$Reaction
+D <- sleepstudy$Days
+I <- sleepstudy$index
+initial_value <- list(beta0=0, beta1=0,
+                      alpha0=1, alpha1=1,
+                      bi0=rep(0,unique(sleepstudy$index) %>% length),
+                      bi1=rep(0,unique(sleepstudy$index) %>% length),
+                      sigma_sq=1)
+hmc.sim.gibbs <- function(initial_value, nsim=1000, burn=0.5, seed=199609){
+  set.seed(seed)
+  nsim.total <- nsim*(1.0 + burn)
+  burn.num <- nsim*burn
+ 
+  for(i in names(initial_value)){
+    assign(i, initial_value[[i]])
+    ifelse(grepl("bi",i)==F,
+           assign(paste0(i,".ch"), vector()),
+           assign(paste0(i,".ch"), matrix(NA,nsim,length(bi0))))
+  } 
+
+  for(i in 1:nsim.total){
+    # i=1
+    
+    ## beta0
+    temp_y_beta0 <- Y - (beta1*D+rep(bi0,times=index)+rep(bi1,times=index)*D)
+    mean_beta0 <- sum(temp_y_beta0)/(n+sigma_sq/100)
+    var_beta0 <- sigma_sq/(n+sigma_sq/100)
+    beta0 <- rnorm(n = 1, mean = mean_beta0, sd = sqrt(var_beta0))
+    
+    ## beta1
+    temp_y_beta1 <- Y - (beta0+rep(bi0,times=index)+rep(bi1,times=index)*D)
+    mean_beta1 <- sum(temp_y_beta1*D)/(sum(D^2)+sigma_sq/100)
+    var_beta1 <- sigma_sq/(sum(D^2)+sigma_sq/100)
+    beta1 <- rnorm(n = 1, mean = mean_beta1, sd = sqrt(var_beta1))
+    
+    ## alpha0
+    alpha0 <- rinvgamma(n = 1, shape = length(index)/2+1, 
+                        scale = sum(bi0^2)/2+1)
+    
+    ## alpha1
+    alpha1 <- rinvgamma(n = 1, shape = length(index)/2+1, 
+                        scale = sum(bi1^2)/2+1)
+    
+    ## sigma_sq
+    mu <- beta0+beta1*D+rep(bi0,times=index)+rep(bi1,times=index)*D
+    sigma_sq <- rinvgamma(n = 1, shape = n/2+0.01, 
+                          scale = sum((Y-mu)^2)/2+0.01)
+    
+    ## bi0
+    temp_y_bi0 <- Y - (beta0+beta1*D+rep(bi1,times=index)*D)
+    bi0 <- sapply(unique(I), function(x){
+      mean_bi0 <- sum(temp_y_bi0[I==x])/(as.numeric(index[x])+sigma_sq/alpha0)
+      var_bi0 <- 1/(as.numeric(index[x])/sigma_sq+1/alpha0)
+      return(rnorm(n = 1, mean = mean_bi0, sd = sqrt(var_bi0)))
+    })
+    
+    ## bi1
+    temp_y_bi1 <- Y - (beta0+beta1*D+rep(bi0,times=index))
+    bi1 <- sapply(unique(I), function(x){
+      mean_bi1 <- sum((D*temp_y_bi1)[I==x])/(sum((D^2)[I==x])+sigma_sq/alpha1)
+      var_bi1 <- 1/(sum((D^2)[I==x])/sigma_sq+1/alpha1)
+      return(rnorm(n = 1, mean = mean_bi1, sd = sqrt(var_bi1)))
+    })
+    
+    ## Leapfrog path
+    input_var <- list(beta0=beta0,beta1=beta1,alpha0=alpha0,alpha1=alpha1,
+                      bi0=bi0,bi1=bi1,sigma_sq=sigma_sq)
+    d0 <- lapply(input_var, function(x)x/10)
+    
+    leap_results<-leap(input_var, d0=d0, epsilon=epsilon, nn=nn, m=m)
+    names(leap_results)<-names(input_var)
+    for(names in names(leap_results)) assign(names, leap_results[[names]])
+    
+    if(i > burn.num){
+      i1 <- i - burn.num
+      bi0.ch[i1,] <- bi0
+      bi1.ch[i1,] <- bi1
+      sigma_sq.ch[i1] <- sigma_sq
+      alpha1.ch[i1] <- alpha1
+      alpha0.ch[i1] <- alpha0
+      beta0.ch[i1] <- beta0
+      beta1.ch[i1] <- beta1
+    }
+  }
+  return(list(sigma_sq=sigma_sq.ch, alpha1=alpha1.ch, alpha0=alpha0.ch,
+              beta0=beta0.ch, beta1=beta1.ch))
+}
+```
+
+```{r}
+nsim <- 1000; m <- c(rep(100,5),rep(10,2)); epsilon <- 0.3; nn <- 50
+results_hmc <- hmc.sim.gibbs(initial_value, nsim=nsim, burn=0.5) 
+df <- Reduce("cbind",results_hmc) %>% as.data.frame
+names(df) <- names(results_gibbs)
+# get results
+results_mean <- apply(df, 2, function(x){quantile(x, c(0.025, 0.5, 0.975))}) %>%
+                round(.,2) %>%
+                apply(., 2, function(x){paste0(x[2]," (", x[1],", ",x[3],")")})
+results_sd <- apply(df, 2, sd) %>% round(.,2)
+par(mfrow=c(2,3))
+for(i in 1:5){
+  plot(1:nsim, df[,i], type="l")
+}
+par(mfrow=c(2,3))
+for(i in 1:5){
+  acf(df[,i])
+}
+cbind(results_mean, results_sd) %>%
+  kbl(caption = "Summary Table",
+      col.names = c("mean(95% CI)","sd")) %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+### 3) 
+
+Compare convergence and mixing associated with the posterior simulations algorithms in (1) and (2).
+
+```{r}
+
+```
+
