@@ -223,7 +223,7 @@ mcmc.sim.gibbs <- function(initial_value, nsim=1000, burn=0,
 simulation begin
 
 ```{r}
-nsim <- 30000
+nsim <- 20000
 results_gibbs <- mcmc.sim.gibbs(initial_value, nsim=nsim, burn=0.5) 
 df <- Reduce("cbind",results_gibbs) %>% as.data.frame
 names(df) <- names(results_gibbs)
@@ -232,14 +232,7 @@ results_mean <- apply(df, 2, function(x){quantile(x, c(0.025, 0.5, 0.975))}) %>%
                 round(.,2) %>%
                 apply(., 2, function(x){paste0(x[2]," (", x[1],", ",x[3],")")})
 results_sd <- apply(df, 2, sd) %>% round(.,2)
-par(mfrow=c(2,3))
-for(i in 1:5){
-  plot(1:nsim, df[,i], type="l")
-}
-par(mfrow=c(2,3))
-for(i in 1:5){
-  acf(df[,i])
-}
+
 cbind(results_mean, results_sd) %>%
   kbl(caption = "Summary Table",
       col.names = c("mean(95% CI)","sd")) %>%
@@ -352,6 +345,8 @@ leap <- function(input_var, d0, epsilon=1, nn=1, m=rep(1,7)){
 
 ```
 
+Then implement HMC sampler in MCMC simulation, 
+
 ```{r}
 n <- sum(index)
 Y <- sleepstudy$Reaction
@@ -443,24 +438,19 @@ hmc.sim.gibbs <- function(initial_value, nsim=1000, burn=0.5, seed=199609){
 }
 ```
 
+simulation begin
+
 ```{r}
-nsim <- 5000; m <- c(rep(100,5),rep(10,2)); epsilon <- 0.3; nn <- 30
+nsim <- 3000; m <- c(rep(100,5),5,10); epsilon <- 0.3; nn <- 30
 results_hmc <- hmc.sim.gibbs(initial_value, nsim=nsim, burn=0.5) 
-df <- Reduce("cbind",results_hmc) %>% as.data.frame
-names(df) <- names(results_gibbs)
+df_hmc <- Reduce("cbind",results_hmc) %>% as.data.frame
+names(df_hmc) <- names(results_gibbs)
 # get results
-results_mean <- apply(df, 2, function(x){quantile(x, c(0.025, 0.5, 0.975))}) %>%
+results_mean <- apply(df_hmc, 2, function(x){quantile(x, c(0.025, 0.5, 0.975))}) %>%
                 round(.,2) %>%
                 apply(., 2, function(x){paste0(x[2]," (", x[1],", ",x[3],")")})
-results_sd <- apply(df, 2, sd) %>% round(.,2)
-par(mfrow=c(2,3))
-for(i in 1:5){
-  plot(1:nsim, df[,i], type="l")
-}
-par(mfrow=c(2,3))
-for(i in 1:5){
-  acf(df[,i])
-}
+results_sd <- apply(df_hmc, 2, sd) %>% round(.,2)
+
 cbind(results_mean, results_sd) %>%
   kbl(caption = "Summary Table",
       col.names = c("mean(95% CI)","sd")) %>%
@@ -472,6 +462,27 @@ cbind(results_mean, results_sd) %>%
 Compare convergence and mixing associated with the posterior simulations algorithms in (1) and (2).
 
 ```{r}
+## Gibbs
+par(mfrow=c(2,3))
+for(i in 1:5){
+  plot(1:length(df[,i]), df[,i], type="l", 
+       ylab = paste0(names(df)[i], "(Gibbs)"))
+}
+par(mfrow=c(2,3))
+for(i in 1:5){
+  acf(df[,i], main = paste0(names(df)[i], "(Gibbs)"))
+}
 
+## HMC
+par(mfrow=c(2,3))
+for(i in 1:5){
+  plot(1:length(df_hmc[,i]), df_hmc[,i], type="l", 
+       ylab = paste0(names(df_hmc)[i], "(HMC)"))
+}
+par(mfrow=c(2,3))
+for(i in 1:5){
+  acf(df_hmc[,i], main = paste0(names(df_hmc)[i], "(HMC)"))
+}
 ```
 
+As we can tell from the plots, HMC method improved the parameters convergence and mixing (autocorrelation approach to 0 faster).
