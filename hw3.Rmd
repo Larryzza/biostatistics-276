@@ -416,7 +416,9 @@ hmc.sim.gibbs <- function(initial_value, nsim=1000, burn=0.5, seed=199609){
     ## Leapfrog path
     input_var <- list(beta0=beta0,beta1=beta1,alpha0=alpha0,alpha1=alpha1,
                       bi0=bi0,bi1=bi1,sigma_sq=sigma_sq)
-    d0 <- lapply(input_var, function(x)x/10)
+    
+    d0 <- lapply(input_var, function(x){rep(rnorm(n = 1, mean = 0, sd = m),
+                                            length(x))})
     
     leap_results<-leap(input_var, d0=d0, epsilon=epsilon, nn=nn, m=m)
     names(leap_results)<-names(input_var)
@@ -441,7 +443,7 @@ hmc.sim.gibbs <- function(initial_value, nsim=1000, burn=0.5, seed=199609){
 simulation begin
 
 ```{r}
-nsim <- 3000; m <- c(rep(100,5),5,10); epsilon <- 0.3; nn <- 30
+nsim <- 10000; m <- c(10,10,100,100,100,20,20); epsilon <- 2; nn <- 10
 results_hmc <- hmc.sim.gibbs(initial_value, nsim=nsim, burn=0.5) 
 df_hmc <- Reduce("cbind",results_hmc) %>% as.data.frame
 names(df_hmc) <- names(results_gibbs)
@@ -455,6 +457,14 @@ cbind(results_mean, results_sd) %>%
   kbl(caption = "Summary Table",
       col.names = c("mean(95% CI)","sd")) %>%
   kable_classic(full_width = F, html_font = "Cambria")
+par(mfrow=c(2,3))
+for(i in 1:5){
+  acf(df[,i], main = paste0(names(df)[i], "(Gibbs)"),lag.max = 40)
+}
+par(mfrow=c(2,3))
+for(i in 1:5){
+  acf(df_hmc[,i], main = paste0(names(df_hmc)[i], "(HMC)"),lag.max = 40)
+}
 ```
 
 ### 3) 
@@ -470,7 +480,7 @@ for(i in 1:5){
 }
 par(mfrow=c(2,3))
 for(i in 1:5){
-  acf(df[,i], main = paste0(names(df)[i], "(Gibbs)"))
+  acf(df[,i], main = paste0(names(df)[i], "(Gibbs)"),lag.max = 40)
 }
 
 ## HMC
@@ -481,7 +491,7 @@ for(i in 1:5){
 }
 par(mfrow=c(2,3))
 for(i in 1:5){
-  acf(df_hmc[,i], main = paste0(names(df_hmc)[i], "(HMC)"))
+  acf(df_hmc[,i], main = paste0(names(df_hmc)[i], "(HMC)"),lag.max = 40)
 }
 ```
 
